@@ -99,4 +99,103 @@ contract FundersDao is ReentrancyGuard, AccessControl {
   {
     return votes[msg.sender];
   }
+
+  function getStakeholdersBal()
+    public
+    view
+    onlyStakeholders("Only stakeholders can see the votes")
+    returns (uint256)
+  {
+    return stakeholders[msg.sender];
+  }
+
+  function getMemberBal()
+    public
+    view
+    onlyMembers("Only Members can call this function.")
+    returns (uint256)
+  {
+    return members[msg.sender];
+  }
+
+  function isStakeholder() public view returns (bool) {
+    return stakeholders[msg.sender] > 0;
+  }
+
+  function isMember() public view returns (bool) {
+    return members[msg.sender] > 0;
+  }
+
+  function vote(uint256 proposalId, bool inFavour)
+    public
+    onlyStakeholders("Only stakeholders can vote")
+  {
+    Proposal storage proposal = proposals[proposalId];
+    if (proposal.isCompleted || proposal.livePeriod <= block.timestamp) {
+      proposal.isCompleted = true;
+      revert("Time period for this proposal is ended");
+    }
+
+    for (uint256 i = 0; i < votes[msg.sender].length; i++) {
+      if (proposal.id == votes[msg.sender][i]) {
+        revert("You can only vote once");
+      }
+    }
+    if (inFavour) proposal.voteInFavor++;
+    else proposal.voteAgainst++;
+    votes[msg.sender].push(proposalId);
+  }
+
+  function provideFunds(uint256 proposalId, uint256 fundAmount)
+    public
+    payable
+    onlyStakeholders("Only Stakeholders can make payments")
+  {
+    Proposal storage proposal = proposals[proposalId];
+
+    if (proposal.isPaid) revert("Proposal already paid out.");
+    if (proposal.voteInFavor <= proposal.voteAgainst)
+      revert("This proposal is not selected for funding.");
+    if (proposal.totalFundRaised >= proposal.amount)
+      revert("Proposal funding goal already reached.");
+    proposal.totalFundRaised += fundAmount;
+    proposal.funders.push(Funding(msg.sender, fundAmount, block.timestamp));
+    if (proposal.totalFundRaised >= proposal.amount) {
+      proposal.isCompleted = true;
+    }
+  }
+
+  function releaseFunding(uint256 proposalId)
+    public
+    payable
+    onlyStakeholders("Only Stakeholders are allowed to release funds")
+  {
+    Proposal storage proposal = proposals[proposalId];
+
+    if (proposal.totalFundRaised <= proposal.amount) {
+      revert("Requested funding goal is not met. Please provide funds.");
+    }
+    proposal.receiverAddress.transfer(proposal.totalFundRaised);
+    proposal.isPaid = true;
+    proposal.isCompleted = true;
+  }
+
+  function createStakeholder() public payable {
+    uint256 amount = msg.value;
+    if (!hasRole(STAKEHOLDER, msg.sender)) {
+      uint256 total = members[msg.sender] + amount;
+      if (total >= 2 ether) {
+        _setupRole(STAKEHOLDER, msg.sender);
+        _setupRole(MEMBER, msg.sender);
+        stakeholders[msg.sender] = total;
+        members[msg.sender] += amount;
+      } else {
+        _setupRole(MEMBER, msg.sender);
+        members[msg.sender] += amount;
+      }
+    } else {
+      members[msg.sender] += amount;
+      stakeholders[msg.sender] += amount;
+    }
+  }
 }
